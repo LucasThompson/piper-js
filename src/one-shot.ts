@@ -391,7 +391,7 @@ export class OneShotExtractionClient implements OneShotExtractionService {
     private client: Service;
     private scheme: OneShotExtractionScheme;
 
-    constructor(service: Service, scheme = OneShotExtractionScheme.LOCAL) {
+    constructor(service: Service, scheme = OneShotExtractionScheme.REMOTE) {
         this.scheme = scheme;
         this.client = new Client(service);
     }
