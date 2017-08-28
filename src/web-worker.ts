@@ -1,7 +1,8 @@
 import {
     ConfigurationRequest,
-    ConfigurationResponse, ExtractorHandle, FeatureSet,
-    FinishRequest, Framing,
+    ConfigurationResponse,
+    ExtractorHandle,
+    FinishRequest,
     ListRequest,
     ListResponse,
     LoadRequest,
@@ -20,7 +21,7 @@ import {
     SuccessfulResponse
 } from "./protocols/web-worker";
 import {RequestIdProvider} from "./clients/web-worker-streaming";
-import {segment, toProcessInputStream} from "./audio";
+import {ExtractorState, frameAndProcess} from "./one-shot";
 
 export class WebWorkerService implements Service {
     private pending: ResponseInfo & {running: boolean};
@@ -115,70 +116,6 @@ export class WebWorkerService implements Service {
     }
 }
 
-type ProcessHandler = (request: ProcessRequest) => ProcessResponse;
-function handleProcess(request: ProcessRequest,
-                       state: ExtractorState,
-                       process: ProcessHandler): ProcessResponse {
-    const {framing} = state || {framing: null};
-    const hasCustomFraming = framing
-        && framing.stepSize != null && framing.blockSize != null;
-    const nChannels = request.processInput.inputBuffers.length;
-    const shouldPerformMultiple = hasCustomFraming
-        && nChannels
-        && request.processInput.inputBuffers[0].length !== framing.blockSize;
-    return shouldPerformMultiple ?
-        processMultiple(request, state, process): process(request);
-}
-
-function processMultiple(request: ProcessRequest,
-                         state: ExtractorState,
-                         process: ProcessHandler): ProcessResponse {
-    const {framing, sampleRate} = state;
-    // TODO should offset by the timestamp in the request
-    const blocks = toProcessInputStream(
-        {
-            frames: segment(
-                framing.blockSize,
-                framing.stepSize,
-                request.processInput.inputBuffers
-            ),
-            format: {
-                channelCount: request.processInput.inputBuffers.length,
-                sampleRate
-            }
-        },
-        framing.stepSize,
-        request.processInput.timestamp
-    );
-    const combined: FeatureSet = new Map();
-    for (const processInput of blocks) {
-      const res = process({
-          handle: request.handle,
-          processInput
-      });
-      combine(res.features, combined);
-    }
-    return {
-        handle: request.handle,
-        features: combined
-    };
-}
-
-function combine(inSet: FeatureSet, outSet: FeatureSet) {
-    inSet.forEach((value, key) => {
-        if (outSet.has(key)) {
-            outSet.get(key).push(...value);
-        } else {
-            outSet.set(key, value);
-        }
-    });
-    return outSet;
-}
-
-interface ExtractorState {
-    sampleRate: number;
-    framing: Framing;
-}
 export class WebWorkerServer {
     private scope: DedicatedWorkerGlobalScope;
     private createService: () => SynchronousService;
@@ -253,7 +190,7 @@ export class WebWorkerServer {
                 }
                 case 'process': {
                     const handle = request.params.handle;
-                    const features = handleProcess(
+                    const features = frameAndProcess(
                         request.params,
                         this.handleToState.get(request.params.handle),
                         (req) => this.getService(handle).process(req)

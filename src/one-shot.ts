@@ -2,16 +2,26 @@
  * Created by lucas on 07/11/2016.
  */
 import {
-    ProcessInput} from "./core";
+    Framing,
+    ProcessInput,
+    ProcessRequest,
+    ProcessResponse
+} from "./core";
 import {
-    AdapterFlags, Configuration, ConfiguredOutputDescriptor,
+    AdapterFlags,
+    Configuration,
+    ConfiguredOutputDescriptor,
     ExtractorHandle,
     Feature,
     FeatureList,
     FeatureSet,
     ListRequest,
     ListResponse,
-    LoadResponse, OutputDescriptor, OutputIdentifier, Parameters, SampleType,
+    LoadResponse,
+    OutputDescriptor,
+    OutputIdentifier,
+    Parameters,
+    SampleType,
     Service
 } from "./core";
 import {toSeconds} from "./time";
@@ -461,4 +471,67 @@ export class OneShotExtractionClient implements OneShotExtractionService {
             });
         }
     };
+}
+
+export interface ExtractorState {
+    sampleRate: number;
+    framing: Framing;
+}
+export type ProcessHandler = (request: ProcessRequest) => ProcessResponse;
+export function frameAndProcess(request: ProcessRequest,
+                                state: ExtractorState,
+                                process: ProcessHandler): ProcessResponse {
+    const {framing} = state || {framing: null};
+    const hasCustomFraming = framing
+        && framing.stepSize != null && framing.blockSize != null;
+    const nChannels = request.processInput.inputBuffers.length;
+    const shouldPerformMultiple = hasCustomFraming
+        && nChannels
+        && request.processInput.inputBuffers[0].length !== framing.blockSize;
+    return shouldPerformMultiple ?
+        processMultiple(request, state, process): process(request);
+}
+
+function processMultiple(request: ProcessRequest,
+                         state: ExtractorState,
+                         process: ProcessHandler): ProcessResponse {
+    const {framing, sampleRate} = state;
+    const blocks = toProcessInputStream(
+        {
+            frames: segment(
+                framing.blockSize,
+                framing.stepSize,
+                request.processInput.inputBuffers
+            ),
+            format: {
+                channelCount: request.processInput.inputBuffers.length,
+                sampleRate
+            }
+        },
+        framing.stepSize,
+        request.processInput.timestamp
+    );
+    const combined: FeatureSet = new Map();
+    for (const processInput of blocks) {
+        const res = process({
+            handle: request.handle,
+            processInput
+        });
+        combine(res.features, combined);
+    }
+    return {
+        handle: request.handle,
+        features: combined
+    };
+}
+
+function combine(inSet: FeatureSet, outSet: FeatureSet) {
+    inSet.forEach((value, key) => {
+        if (outSet.has(key)) {
+            outSet.get(key).push(...value);
+        } else {
+            outSet.set(key, value);
+        }
+    });
+    return outSet;
 }

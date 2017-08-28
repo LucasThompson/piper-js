@@ -9,6 +9,7 @@ import {
     ProcessInputAdjustmentMethod
 } from './adjusters';
 import {RealFftFactory} from './fft';
+import {ExtractorState, frameAndProcess, ProcessHandler} from "./one-shot";
 
 // Types used in the application
 
@@ -350,8 +351,8 @@ export interface DescribedFeatureExtractor {
 
 export class FeatureExtractorSynchronousService implements SynchronousService {
     private factories: Map<string, FeatureExtractorFactory>;
-    private loaded: Map<number, DescribedFeatureExtractor>;
-    private configured: Map<number, DescribedFeatureExtractor>;
+    private loaded: Map<number, DescribedFeatureExtractor & {sampleRate: number}>;
+    private configured: Map<number, DescribedFeatureExtractor & ExtractorState>;
     private countingHandle: number;
     private fftFactory: RealFftFactory;
 
@@ -404,7 +405,8 @@ export class FeatureExtractorSynchronousService implements SynchronousService {
                 ) : factory.create(request.inputSampleRate);
         this.loaded.set(++this.countingHandle, {
             extractor: extractor,
-            metadata: metadata
+            metadata: metadata,
+            sampleRate: request.inputSampleRate
         }); // TODO should the first assigned handle be 1 or 0? currently 1
 
         const defaultConfiguration = extractor.getDefaultConfiguration();
@@ -424,12 +426,15 @@ export class FeatureExtractorSynchronousService implements SynchronousService {
             throw new Error("FeatureExtractorFactory is already configured");
         }
 
-        const plugin: DescribedFeatureExtractor = this.loaded.get(request.handle);
+        const plugin = this.loaded.get(request.handle);
         // TODO this is probably where the error handling for channel mismatch should be...
         const response: ExtractorConfiguration = plugin.extractor.configure(
             request.configuration
         );
-        this.configured.set(request.handle, plugin);
+        this.configured.set(request.handle, {
+            ...plugin,
+            framing: response.framing
+        });
         const outputList = plugin.metadata.basicOutputInfo.map(basic => {
             return Object.assign(
                 {
@@ -461,7 +466,7 @@ export class FeatureExtractorSynchronousService implements SynchronousService {
             throw new Error("Invalid plugin handle, or plugin not configured.");
         }
 
-        const plugin: DescribedFeatureExtractor = this.configured.get(request.handle);
+        const plugin = this.configured.get(request.handle);
         const numberOfInputs: number = request.processInput.inputBuffers.length;
         const metadata: StaticData = plugin.metadata;
 
@@ -471,11 +476,13 @@ export class FeatureExtractorSynchronousService implements SynchronousService {
             throw new Error("wrong number of channels supplied.");
         }
 
-        const features = plugin.extractor.process(request.processInput);
-        return {
+        const handler: ProcessHandler = req => ({
             handle: request.handle,
-            features: features
-        };
+            features: plugin.extractor.process(
+                req.processInput
+            )
+        });
+        return frameAndProcess(request, plugin, handler);
     }
 
     finish(request: FinishRequest): FinishResponse {
