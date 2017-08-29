@@ -30,7 +30,8 @@ type Request = ListRequest
     | ConfigurationRequest
     | LoadRequest
     | ProcessRequest
-    | FinishRequest;
+    | FinishRequest
+    | any[];
 interface Mock {
     wasCalledWith(request: Request,
                   method: WebMethod): boolean;
@@ -183,53 +184,54 @@ describe('WebWorkerServer', () => {
         });
     });
 
+    const messages: RequestMessage<Request>[] = [
+        {
+            id: "0",
+            method: "list",
+            params: {from: []}
+        },
+        {
+            id: "1",
+            method: "load",
+            params: {
+                key: 'stub',
+                inputSampleRate: 44100,
+                adapterFlags: []
+            }
+        },
+        {
+            id: "2",
+            method: "configure",
+            params: {
+                handle: 0,
+                configuration: {
+                    channelCount: 1,
+                    framing: {
+                        stepSize: 512,
+                        blockSize: 1024
+                    }
+                }
+            }
+        },
+        {
+            id: "3",
+            method: "process",
+            params: {
+                handle: 0,
+                processInput: {
+                    timestamp: {s: 0, n: 0},
+                    inputBuffers: []
+                }
+            }
+        },
+        {
+            id: "4",
+            method: "finish",
+            params: {handle: 0}
+        },
+    ];
+
     it("Correctly routes requests", () => {
-        const messages: RequestMessage<Request>[] = [
-            {
-                id: "0",
-                method: "list",
-                params: {from: []}
-            },
-            {
-                id: "1",
-                method: "load",
-                params: {
-                    key: 'stub',
-                    inputSampleRate: 44100,
-                    adapterFlags: []
-                }
-            },
-            {
-                id: "2",
-                method: "configure",
-                params: {
-                    handle: 0,
-                    configuration: {
-                        channelCount: 1,
-                        framing: {
-                            stepSize: 512,
-                            blockSize: 1024
-                        }
-                    }
-                }
-            },
-            {
-                id: "3",
-                method: "process",
-                params: {
-                    handle: 0,
-                    processInput: {
-                        timestamp: {s: 0, n: 0},
-                        inputBuffers: []
-                    }
-                }
-            },
-            {
-                id: "4",
-                method: "finish",
-                params: {handle: 0}
-            },
-        ];
         let failed: boolean[] = [];
         const failLog: MochaDone = (err) => {
             if (err) {
@@ -247,6 +249,21 @@ describe('WebWorkerServer', () => {
             }, failLog);
         }
         failed.length.should.eql(0);
+    });
+
+    it("Correctly routes batched requests", () => {
+        const message: RequestMessage<any[]> = {
+            id: "batched",
+            method: "batch",
+            params: messages
+        };
+        const service = new MockService();
+        const workerScope = new StubWorkerScope(() => {});
+        new WebWorkerServer(workerScope, () => service);
+        workerScope.sendMessage(message);
+        for (let request of message.params) {
+            service.wasCalledWith(request.params, request.method).should.be.true;
+        }
     });
 
     it('sends error message on invalid request ', done => {
