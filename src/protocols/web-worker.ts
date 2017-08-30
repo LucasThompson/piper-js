@@ -1,6 +1,6 @@
 import {RpcMethod} from "./json";
 export type RequestId = string;
-export type WebMethod = RpcMethod | "collect";
+export type WebMethod = RpcMethod | "collect" | "batch";
 
 export interface RequestMessage<RequestType> {
     method: WebMethod;
