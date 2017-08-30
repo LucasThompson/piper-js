@@ -1,7 +1,10 @@
 import {
     ConfigurationRequest,
-    ConfigurationResponse, ExtractorHandle, FeatureSet,
-    FinishRequest, Framing,
+    ConfigurationResponse,
+    ExtractorHandle,
+    FeatureSet,
+    FinishRequest,
+    Framing,
     ListRequest,
     ListResponse,
     LoadRequest,
@@ -276,6 +279,12 @@ export class WebWorkerServer {
                     );
                     break;
                 }
+                case 'batch': {
+                    for (let message of request.params) {
+                        this.handleRequest(message);
+                    }
+                    break;
+                }
                 default:
                     this.sendError(request, 'Invalid request type');
             }
@@ -304,7 +313,14 @@ export class WebWorkerServer {
     }
 
     private isValidRequestShape(req: Partial<RequestMessage<any>>): boolean {
-        return req.params != null && req.id != null && req.method != null;
+        const isValidShape =
+            req.params != null && req.id != null && req.method != null;
+        const isBatch = isValidShape && req.params === 'batch';
+        if (isBatch) {
+            return req.params instanceof Array;
+        } else {
+            return isValidShape;
+        }
     }
 
     private sendError(info: ResponseInfo,
